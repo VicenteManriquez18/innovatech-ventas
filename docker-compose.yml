@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  database_ventas:
+    image: mysql:8.0
+    container_name: db_mysql_ventas
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: db_ventas
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data_ventas:/var/lib/mysql
+    networks:
+      - red_proyecto
+    restart: always
+
+  back_ventas:
+    build: .
+    image: ${DOCKER_IMAGE:-proyecto-back-ventas:latest}
+    container_name: api_ventas
+    ports:
+      - "8080:8080"
+    environment:
+      - DB_ENDPOINT=database_ventas
+      - DB_PORT=3306
+      - DB_NAME=db_ventas
+      - DB_USERNAME=root
+      - DB_PASSWORD=root
+    depends_on:
+      - database_ventas
+    networks:
+      - red_proyecto
+    restart: always
+
+volumes:
+  db_data_ventas:
+
+networks:
+  red_proyecto:
+    external: true
+    name: red_proyecto

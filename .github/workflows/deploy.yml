@@ -1,0 +1,60 @@
+name: CI/CD Pipeline - Backend Ventas
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build image
+        run: docker build -t api-ventas .
+
+      - name: Tag image
+        run: docker tag api-ventas:latest ${{ secrets.ECR_REPO_URL_BACKEND_VENTAS }}:latest
+
+      - name: Push image
+        run: docker push ${{ secrets.ECR_REPO_URL_BACKEND_VENTAS }}:latest
+
+      - name: Deploy Database Ventas on EC2 via SSM
+        run: |
+          aws ssm send-command \
+            --instance-ids "${{ secrets.EC2_DB_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=[
+              "docker stop db_mysql_ventas || true",
+              "docker rm db_mysql_ventas || true",
+              "docker run -d --name db_mysql_ventas --restart always -p 3306:3306 -e MYSQL_ROOT_PASSWORD=${{ secrets.DB_PASSWORD }} -e MYSQL_DATABASE=db_ventas -v db_data_ventas:/var/lib/mysql mysql:8.0"
+            ]' \
+            --comment "Deploy DB Ventas"
+
+      - name: Deploy Backend on EC2 via SSM
+        run: |
+          aws ssm send-command \
+            --instance-ids "${{ secrets.EC2_BACKEND_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=[
+              "aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}",
+              "docker pull ${{ secrets.ECR_REPO_URL_BACKEND_VENTAS }}:latest",
+              "docker stop api_ventas || true",
+              "docker rm api_ventas || true",
+              "docker run -d --name api_ventas -p 8080:8080 -e DB_ENDPOINT=${{ secrets.DB_HOST }} -e DB_PORT=3306 -e DB_NAME=db_ventas -e DB_USERNAME=${{ secrets.DB_USER }} -e DB_PASSWORD=${{ secrets.DB_PASSWORD }} ${{ secrets.ECR_REPO_URL_BACKEND_VENTAS }}:latest"
+            ]' \
+            --comment "Deploy Backend Ventas"
